@@ -28,6 +28,7 @@
 | 日期 | 版本 | 变更内容 | 作者 |
 |------|------|----------|------|
 | 2026-02-03 | v1.0 | 初始版本 | Arch |
+| 2026-02-03 | v1.1 | 路径对齐后端实现：Cancel-/transactions/{id}/cancel; Correction-/corrections; 初审-/review; 终审-/approve | Arch |
 
 ---
 
@@ -174,9 +175,9 @@
 | GET | `/refunds/batch/jobs/{jobId}` | 查询批量任务 | `refund:batch` |
 | POST | `/refunds/{id}/approve` | 审批退款 | `refund:approve` |
 | POST | `/cancels` | 取消交易 | `cancel:create` |
-| POST | `/corrects` | 申请校正 | `correct:submit` |
-| POST | `/corrects/{id}/initial-review` | 初审校正 | `correct:initial_review` |
-| POST | `/corrects/{id}/final-review` | 终审校正 | `correct:final_review` |
+| POST | `/corrections` | 申请校正 | `correct:submit` |
+| POST | `/corrections/{id}/review` | 初审校正 | `correct:initial_review` |
+| POST | `/corrections/{id}/approve` | 终审校正 | `correct:final_review` |
 
 ---
 
@@ -609,7 +610,7 @@ GET /refunds/batch/jobs/{jobId}
 ### 10. 取消交易
 
 ```http
-POST /cancels
+POST /transactions/{id}/cancel
 Content-Type: application/json
 ```
 
@@ -631,7 +632,7 @@ Content-Type: application/json
 ### 11. 申请校正
 
 ```http
-POST /corrects
+POST /corrections
 Content-Type: application/json
 ```
 
@@ -670,7 +671,7 @@ Content-Type: application/json
 ### 12. 初审校正
 
 ```http
-POST /corrects/{id}/initial-review
+POST /corrections/{id}/review
 Content-Type: application/json
 ```
 
@@ -689,7 +690,7 @@ Content-Type: application/json
 ### 13. 终审校正
 
 ```http
-POST /corrects/{id}/final-review
+POST /corrections/{id}/approve
 Content-Type: application/json
 ```
 

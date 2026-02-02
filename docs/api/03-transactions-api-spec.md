@@ -32,6 +32,13 @@
 
 ---
 
+
+## 参考实现
+
+> **OpenAPI 3.0 Spec**: [forgeplex/psp-docs/docs/api/admin-openapi.yaml](https://github.com/forgeplex/psp-docs/blob/main/docs/api/admin-openapi.yaml)
+> 
+> 由 BE 维护，包含完整 API 定义（37484 行，~1MB）
+
 ## BE 业务规则确认
 
 ### 1. Refund 同步还是异步？
@@ -972,9 +979,10 @@ wss://psp-dev.forgeplex.com/ws/transactions?token={JWT_TOKEN}
 
 ## 关联文档
 
-- [04-transactions-business-rules.md](./04-transactions-business-rules.md) (待创建)
+- [04-transactions-business-rules.md](./04-transactions-business-rules.md) 
 - [ADR-024: 批量退款技术方案](../adr/ADR-024-batch-refund-technical-spec.md)
 - [ADR-023: 风控服务 Fail-Open 策略](../adr/ADR-023-risk-fail-open-strategy.md)
+- [BE OpenAPI 3.0 Spec](https://github.com/forgeplex/psp-docs/blob/main/docs/api/admin-openapi.yaml) - 完整 API 定义（由 BE 维护）
 
 ---
 

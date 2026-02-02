@@ -15,8 +15,8 @@
 |------|------|----------|
 | `forgeplex/psp-project` | 项目信息、规划、进度 | Alex, Atath |
 | `forgeplex/psp-docs` | PRD、设计文档、技术文档 | PM, UIUX, Arch |
-| `forgeplex/psp-admin` | 前端代码 | FE |
-| `forgeplex/psp-api` | 后端代码 | BE |
+| `forgeplex/psp-web` | 前端代码 | FE |
+| `forgeplex/psp` | 后端代码 | BE |
 | `forgeplex/psp-infra` | 基础设施配置 | Infra |
 
 ## 技术栈

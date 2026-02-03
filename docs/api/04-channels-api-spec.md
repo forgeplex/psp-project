@@ -1,1166 +1,293 @@
-# 04-channels-api-spec.md
+# Channels API Spec v0.9
 
-> **模块**: Channels（渠道管理）  
-> **版本**: v0.9  
-> **发布日期**: 2026-02-03  
-> **作者**: Arch  
-> **状态**: 📝 评审版 - 明日 Plan Review
-
----
-
-## 目录
-
-1. [变更日志](#变更日志)
-2. [接口概览](#接口概览)
-3. [接口详情](#接口详情)
-4. [数据模型](#数据模型)
-5. [路由策略规则引擎](#路由策略规则引擎)
-6. [状态机定义](#状态机定义)
-7. [健康检查机制](#健康检查机制)
+> **版本**: 0.9  
+> **状态**: Sprint 2 交付版  
+> **日期**: 2026-02-03  
+> **负责人**: Arch
 
 ---
 
-## 变更日志
+## 1. 设计决策 (Design Decisions)
 
-| 日期 | 版本 | 变更内容 | 作者 |
-|------|------|----------|------|
-| 2026-02-03 | v0.9 | 初始版本 - 15个端点 | Arch |
+### 1.1 Sprint 边界说明
 
----
+| 功能 | Sprint 2 | Sprint 3 |
+|------|----------|----------|
+| 路由条件 | 单层 AND 条件 | 嵌套 OR/AND、复杂表达式 |
+| 策略排序 | 批量提交 reorder | 实时拖拽 PATCH |
+| 健康数据 | 轮询接口 | WebSocket 实时推送 |
+| 规则编辑器 | 表单化配置 | 可视化流程图/JSON |
 
-## 接口概览
+### 1.2 技术决策确认
 
-### 基础信息
+**Q1: 规则引擎复杂度**
+- 决策：简化版（单层 AND 条件）
+- 实现：表单化配置，支持 amount/currency/country/merchant_id 基础字段
+- 限制：不支持 OR 条件、不支持嵌套规则组
 
-- **Base URL**: `https://psp-dev.forgeplex.com/api/v1`
-- **认证方式**: Bearer Token (JWT)
-- **Content-Type**: `application/json`
+**Q2: config_schema 字段类型**
+- 决策：5 种基础类型
+- 类型：`string` | `number` | `enum` | `boolean` | `secret`
+- 说明：secret 类型前端显示为密码框，后端加密存储
 
-### 接口列表
+**Q3: 拖拽排序方式**
+- 决策：列表页直接拖拽 + 批量提交
+- 接口：`POST /routing-strategies/reorder`
+- 行为：原子性更新所有策略优先级
 
-| 模块 | 方法 | 路径 | 说明 | 权限码 |
-|------|------|------|------|--------|
-| **渠道管理** | GET | `/channels` | 渠道列表查询 | `channel:view` |
-| | GET | `/channels/{id}` | 渠道详情 | `channel:view` |
-| | POST | `/channels` | 创建渠道 | `channel:create` |
-| | PATCH | `/channels/{id}` | 更新渠道 | `channel:update` |
-| | DELETE | `/channels/{id}` | 删除渠道 | `channel:delete` |
-| | POST | `/channels/{id}/toggle` | 启用/禁用渠道 | `channel:toggle` |
-| **路由策略** | GET | `/routing-strategies` | 路由策略列表 | `routing:view` |
-| | GET | `/routing-strategies/{id}` | 路由策略详情 | `routing:view` |
-| | POST | `/routing-strategies` | 创建路由策略 | `routing:create` |
-| | PATCH | `/routing-strategies/{id}` | 更新路由策略 | `routing:update` |
-| | POST | `/routing-strategies/reorder` | 批量调整优先级 | `routing:reorder` |
-| **健康检查** | GET | `/health-checks` | 健康检查记录列表 | `health:view` |
-| | GET | `/health-checks/{id}` | 健康检查详情 | `health:view` |
-| | POST | `/health-checks` | 手动触发检查 | `health:trigger` |
-| | GET | `/channels/{id}/health-status` | 渠道实时健康状态 | `health:view` |
-| **提供商管理** | GET | `/providers` | 提供商列表 | `provider:view` |
-| | GET | `/providers/{id}` | 提供商详情 | `provider:view` |
+**Q4: 健康数据实时性**
+- 决策：静态 + 手动刷新
+- 接口：`GET /channels/:id/health`
+- 建议：前端轮询间隔 30s
 
 ---
 
-## 接口详情
+## 2. API 端点清单
 
----
+### 2.1 渠道管理 (6 端点)
 
-### 渠道管理
-
-#### 1. 渠道列表查询
-
-```http
-GET /channels?page=1&size=20&status=active&provider=wechat_pay
-```
-
-**Query Parameters**:
-| 参数 | 类型 | 必填 | 说明 |
+| 方法 | 路径 | 描述 | 权限 |
 |------|------|------|------|
-| page | integer | 否 | 页码，默认 1 |
-| size | integer | 否 | 每页数量，默认 20 |
-| status | string | 否 | 状态: `active`, `inactive`, `maintenance` |
-| provider | string | 否 | 提供商编码 |
-| keyword | string | 否 | 搜索关键词（名称/编码） |
-| type | string | 否 | 渠道类型: `payment`, `payout`, `combined` |
+| GET | `/api/v1/channels` | 渠道列表 | channels:read |
+| GET | `/api/v1/channels/:id` | 渠道详情 | channels:read |
+| POST | `/api/v1/channels` | 创建渠道 | channels:create |
+| PUT | `/api/v1/channels/:id` | 更新渠道 | channels:update |
+| POST | `/api/v1/channels/:id/enable` | 启用渠道 | channels:update |
+| POST | `/api/v1/channels/:id/disable` | 禁用渠道 | channels:update |
 
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "items": [
-      {
-        "id": "ch_abc123",
-        "code": "WECHAT_PAY",
-        "name": "微信支付",
-        "provider_id": "prov_wechat",
-        "provider_name": "财付通",
-        "type": "payment",
-        "status": "active",
-        "priority": 100,
-        "config": {
-          "app_id": "wx123456789",
-          "mch_id": "1234567890"
-        },
-        "limits": {
-          "min_amount": 0.01,
-          "max_amount": 50000.00,
-          "daily_limit": 1000000.00
-        },
-        "health_status": "healthy",
-        "last_health_check": "2026-02-03T10:00:00Z",
-        "success_rate_24h": 0.998,
-        "avg_response_ms": 120,
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-02-03T09:00:00Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "size": 20,
-      "total": 5,
-      "total_pages": 1
-    }
-  }
-}
-```
+### 2.2 路由策略 (5 端点)
 
----
-
-#### 2. 渠道详情
-
-```http
-GET /channels/{id}
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "ch_abc123",
-    "code": "WECHAT_PAY",
-    "name": "微信支付",
-    "description": "微信支付 - 移动端",
-    "provider_id": "prov_wechat",
-    "provider_name": "财付通",
-    "provider_code": "WECHAT",
-    "type": "payment",
-    "status": "active",
-    "priority": 100,
-    "config": {
-      "app_id": "wx123456789",
-      "mch_id": "1234567890",
-      "api_version": "v3"
-    },
-    "limits": {
-      "min_amount": 0.01,
-      "max_amount": 50000.00,
-      "daily_limit": 1000000.00,
-      "monthly_limit": 10000000.00
-    },
-    "routing_strategies": [
-      {
-        "id": "rs_001",
-        "name": "默认策略",
-        "priority": 1
-      }
-    ],
-    "health_status": "healthy",
-    "last_health_check": "2026-02-03T10:00:00Z",
-    "success_rate_24h": 0.998,
-    "avg_response_ms": 120,
-    "error_rate_24h": 0.002,
-    "txn_count_24h": 15420,
-    "created_at": "2026-01-01T00:00:00Z",
-    "updated_at": "2026-02-03T09:00:00Z",
-    "created_by": "admin",
-    "updated_by": "admin"
-  }
-}
-```
-
----
-
-#### 3. 创建渠道
-
-```http
-POST /channels
-Content-Type: application/json
-```
-
-**Request Body**:
-```json
-{
-  "code": "ALIPAY_APP",
-  "name": "支付宝 - APP支付",
-  "description": "支付宝APP端支付渠道",
-  "provider_id": "prov_alipay",
-  "type": "payment",
-  "priority": 90,
-  "config": {
-    "app_id": "2024XXXXXX",
-    "merchant_pid": "2088XXXXXX",
-    "sign_type": "RSA2"
-  },
-  "limits": {
-    "min_amount": 0.01,
-    "max_amount": 100000.00,
-    "daily_limit": 5000000.00
-  }
-}
-```
-
-**字段验证规则**:
-| 字段 | 规则 |
-|------|------|
-| code | 必填，唯一，大写下划线格式，2-50字符 |
-| name | 必填，2-100字符 |
-| provider_id | 必填，必须是存在的提供商 |
-| type | 必填，枚举: `payment`, `payout`, `combined` |
-| priority | 必填，整数，范围 1-9999 |
-| config | JSON对象，结构由提供商定义 |
-
-**Response 201**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "ch_new123",
-    "code": "ALIPAY_APP",
-    "name": "支付宝 - APP支付",
-    "status": "inactive",
-    "created_at": "2026-02-03T11:00:00Z"
-  }
-}
-```
-
----
-
-#### 4. 更新渠道
-
-```http
-PATCH /channels/{id}
-Content-Type: application/json
-```
-
-**Request Body** (支持部分更新):
-```json
-{
-  "name": "支付宝 - APP支付（新版）",
-  "description": "更新描述",
-  "priority": 95,
-  "config": {
-    "app_id": "2024XXXXXX",
-    "merchant_pid": "2088XXXXXX",
-    "sign_type": "RSA2",
-    "new_field": "value"
-  },
-  "limits": {
-    "max_amount": 200000.00
-  }
-}
-```
-
-**约束**:
-- `code`, `type`, `provider_id` 不可修改
-- 修改 `config` 时会合并而非替换（顶层key级）
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "ch_abc123",
-    "updated_at": "2026-02-03T11:05:00Z"
-  }
-}
-```
-
----
-
-#### 5. 删除渠道
-
-```http
-DELETE /channels/{id}
-```
-
-**约束**:
-- 只能删除 `inactive` 状态的渠道
-- 有关联交易记录时禁止删除（标记废弃而非物理删除）
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "message": "渠道已删除"
-}
-```
-
-**Response 409** (存在依赖):
-```json
-{
-  "code": 409001,
-  "message": "渠道存在关联交易，无法删除",
-  "data": {
-    "transaction_count": 1500
-  }
-}
-```
-
----
-
-#### 6. 启用/禁用渠道
-
-```http
-POST /channels/{id}/toggle
-Content-Type: application/json
-```
-
-**Request Body**:
-```json
-{
-  "action": "enable"
-}
-```
-
-**Action 枚举**:
-| 值 | 说明 |
-|----|----|
-| enable | 启用渠道 |
-| disable | 禁用渠道 |
-| maintenance | 进入维护模式 |
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "ch_abc123",
-    "status": "active",
-    "previous_status": "inactive",
-    "toggled_at": "2026-02-03T11:10:00Z"
-  }
-}
-```
-
----
-
-### 路由策略
-
-#### 7. 路由策略列表
-
-```http
-GET /routing-strategies?page=1&size=20&status=active
-```
-
-**Query Parameters**:
-| 参数 | 类型 | 必填 | 说明 |
+| 方法 | 路径 | 描述 | 权限 |
 |------|------|------|------|
-| page | integer | 否 | 页码，默认 1 |
-| size | integer | 否 | 每页数量，默认 20 |
-| status | string | 否 | 状态: `active`, `inactive` |
-| channel_id | string | 否 | 筛选指定渠道的策略 |
+| GET | `/api/v1/routing-strategies` | 策略列表 | routing:read |
+| POST | `/api/v1/routing-strategies` | 创建策略 | routing:manage |
+| PUT | `/api/v1/routing-strategies/:id` | 更新策略 | routing:manage |
+| DELETE | `/api/v1/routing-strategies/:id` | 删除策略 | routing:manage |
+| POST | `/api/v1/routing-strategies/reorder` | 批量排序 | routing:manage |
 
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "items": [
-      {
-        "id": "rs_001",
-        "name": "大额优先 - 支付宝",
-        "description": "金额 > 1000 优先使用支付宝",
-        "priority": 1,
-        "status": "active",
-        "rules_count": 2,
-        "target_channels": [
-          { "id": "ch_alipay", "name": "支付宝", "weight": 80 },
-          { "id": "ch_wechat", "name": "微信支付", "weight": 20 }
-        ],
-        "match_count_24h": 5230,
-        "created_at": "2026-01-15T00:00:00Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "size": 20,
-      "total": 8,
-      "total_pages": 1
-    }
-  }
+### 2.3 监控与测试 (3 端点)
+
+| 方法 | 路径 | 描述 | 权限 |
+|------|------|------|------|
+| GET | `/api/v1/channels/:id/health` | 健康状态 | channels:read |
+| GET | `/api/v1/channels/:id/stats` | 统计数据 | channels:read |
+| POST | `/api/v1/channels/:id/test` | 连通性测试 | channels:test |
+
+### 2.4 提供商 (1 端点)
+
+| 方法 | 路径 | 描述 | 权限 |
+|------|------|------|------|
+| GET | `/api/v1/providers` | 提供商列表 | providers:read |
+
+---
+
+## 3. 数据模型
+
+### 3.1 Channel (渠道)
+
+```typescript
+interface Channel {
+  id: string;                    // UUID
+  name: string;                  // 渠道名称
+  provider: ProviderType;        // 提供商类型
+  status: ChannelStatus;         // 状态
+  weight: number;                // 权重 1-100
+  config: Record<string, any>;   // 渠道配置（加密存储敏感字段）
+  success_rate: number;          // 近24小时成功率
+  avg_response_ms: number;       // 近24小时平均响应时间
+  created_at: string;            // ISO8601
+  updated_at: string;            // ISO8601
 }
+
+type ProviderType = 'stripe' | 'adyen' | 'pix' | 'spei' | 'upi';
+type ChannelStatus = 'active' | 'inactive' | 'error' | 'maintenance';
+```
+
+### 3.2 RoutingStrategy (路由策略)
+
+```typescript
+interface RoutingStrategy {
+  id: string;
+  name: string;
+  priority: number;              // 越小越优先，从 1 开始
+  conditions: RoutingConditions; // 匹配条件
+  target_channels: string[];     // 目标渠道ID列表
+  channel_weights: Record<string, number>; // 渠道权重分配
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Sprint 2: 简化版单层条件
+interface RoutingConditions {
+  amount_min?: number;           // 最小金额（分）
+  amount_max?: number;           // 最大金额（分）
+  currency?: string[];           // 币种列表，如 ["BRL", "MXN"]
+  merchant_id?: string[];        // 商户ID列表
+  country?: string[];            // 国家代码，如 ["BR", "MX"]
+}
+```
+
+### 3.3 Config Schema (渠道配置定义)
+
+```typescript
+interface ConfigSchema {
+  fields: ConfigField[];
+}
+
+interface ConfigField {
+  key: string;                   // 字段标识
+  label: string;                 // 显示名称
+  type: ConfigFieldType;         // 字段类型
+  required: boolean;             // 是否必填
+  default?: any;                 // 默认值
+  options?: SelectOption[];      // enum 类型选项
+  placeholder?: string;          // 占位提示
+  description?: string;          // 字段说明
+}
+
+type ConfigFieldType = 'string' | 'number' | 'enum' | 'boolean' | 'secret';
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+```
+
+### 3.4 Health Status (健康状态)
+
+```typescript
+interface ChannelHealth {
+  channel_id: string;
+  status: HealthStatus;          // 健康状态
+  success_rate: number;          // 成功率 0-100
+  avg_response_ms: number;       // 平均响应时间
+  last_check_at: string;         // 最后检查时间
+  next_check_at: string;         // 下次检查时间
+  error_count: number;           // 连续错误次数
+  message?: string;              // 状态说明
+}
+
+type HealthStatus = 'healthy' | 'warning' | 'critical' | 'offline';
 ```
 
 ---
 
-#### 8. 路由策略详情
+## 4. 关键接口详情
+
+### 4.1 批量排序接口
 
 ```http
-GET /routing-strategies/{id}
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "rs_001",
-    "name": "大额优先 - 支付宝",
-    "description": "金额 > 1000 优先使用支付宝",
-    "priority": 1,
-    "status": "active",
-    "rules": {
-      "conditions": [
-        {
-          "field": "amount",
-          "operator": "gt",
-          "value": 1000
-        },
-        {
-          "field": "currency",
-          "operator": "eq",
-          "value": "CNY"
-        }
-      ],
-      "logic": "AND"
-    },
-    "targets": [
-      {
-        "channel_id": "ch_alipay",
-        "channel_name": "支付宝",
-        "channel_code": "ALIPAY_APP",
-        "weight": 80,
-        "failover_to": "ch_wechat"
-      },
-      {
-        "channel_id": "ch_wechat",
-        "channel_name": "微信支付",
-        "channel_code": "WECHAT_PAY",
-        "weight": 20,
-        "failover_to": null
-      }
-    ],
-    "failover_config": {
-      "enabled": true,
-      "max_retries": 3,
-      "retry_interval_ms": 500,
-      "fallback_channel_id": "ch_bank_card"
-    },
-    "match_count_24h": 5230,
-    "match_rate_24h": 0.35,
-    "created_at": "2026-01-15T00:00:00Z",
-    "updated_at": "2026-02-03T09:00:00Z"
-  }
-}
-```
-
----
-
-#### 9. 创建路由策略
-
-```http
-POST /routing-strategies
+POST /api/v1/routing-strategies/reorder
+Authorization: Bearer {token}
 Content-Type: application/json
-```
 
-**Request Body**:
-```json
 {
-  "name": "VIP用户 - 快捷支付",
-  "description": "VIP等级 >= 3 用户使用快捷支付",
-  "priority": 5,
-  "rules": {
-    "conditions": [
-      {
-        "field": "user.vip_level",
-        "operator": "gte",
-        "value": 3
-      },
-      {
-        "field": "payment_method",
-        "operator": "in",
-        "value": ["QUICK_PAY"]
-      }
-    ],
-    "logic": "AND"
-  },
-  "targets": [
-    {
-      "channel_id": "ch_quick_pay",
-      "weight": 100,
-      "failover_to": null
-    }
-  ],
-  "failover_config": {
-    "enabled": true,
-    "max_retries": 2,
-    "retry_interval_ms": 300,
-    "fallback_channel_id": "ch_unionpay"
-  }
+  "strategy_ids": ["uuid-1", "uuid-2", "uuid-3"]
 }
 ```
 
-**Condition 字段说明**:
-| 字段 | 说明 |
-|------|------|
-| field | 条件字段，支持: `amount`, `currency`, `user_id`, `user.vip_level`, `merchant_id`, `payment_method`, `device_type`, `region` |
-| operator | 操作符: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `regex` |
-| value | 条件值，类型根据 field 自动推断 |
+**说明：**
+- 数组顺序即为新的优先级顺序（索引 0 = priority 1）
+- 后端原子性更新所有策略的 priority 字段
+- 不在列表中的策略优先级保持不变
 
-**Response 201**:
+**响应：**
 ```json
 {
-  "code": 0,
-  "data": {
-    "id": "rs_new123",
-    "name": "VIP用户 - 快捷支付",
-    "priority": 5,
-    "status": "active",
-    "created_at": "2026-02-03T11:15:00Z"
-  }
-}
-```
-
----
-
-#### 10. 更新路由策略
-
-```http
-PATCH /routing-strategies/{id}
-Content-Type: application/json
-```
-
-**Request Body** (支持部分更新):
-```json
-{
-  "name": "VIP用户 - 快捷支付（更新）",
-  "priority": 4,
-  "rules": {
-    "conditions": [
-      {
-        "field": "user.vip_level",
-        "operator": "gte",
-        "value": 2
-      }
-    ],
-    "logic": "AND"
-  },
-  "targets": [
-    {
-      "channel_id": "ch_quick_pay",
-      "weight": 70,
-      "failover_to": "ch_unionpay"
-    },
-    {
-      "channel_id": "ch_unionpay",
-      "weight": 30,
-      "failover_to": null
-    }
-  ]
-}
-```
-
-**约束**:
-- `rules` 和 `targets` 更新时会全量替换（非合并）
-- 修改 `priority` 时会自动重新排序其他策略
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "rs_001",
-    "updated_at": "2026-02-03T11:20:00Z"
-  }
-}
-```
-
----
-
-#### 11. 批量调整优先级
-
-```http
-POST /routing-strategies/reorder
-Content-Type: application/json
-```
-
-**Request Body**:
-```json
-{
-  "orders": [
-    { "id": "rs_001", "priority": 1 },
-    { "id": "rs_003", "priority": 2 },
-    { "id": "rs_002", "priority": 3 }
-  ]
-}
-```
-
-**约束**:
-- `orders` 数组必须包含所有活跃策略的 ID
-- priority 必须唯一且连续（1-N）
-
-**Response 200**:
-```json
-{
-  "code": 0,
   "data": {
     "updated": 3,
-    "orders": [
-      { "id": "rs_001", "priority": 1 },
-      { "id": "rs_003", "priority": 2 },
-      { "id": "rs_002", "priority": 3 }
+    "strategies": [
+      {"id": "uuid-1", "priority": 1},
+      {"id": "uuid-2", "priority": 2},
+      {"id": "uuid-3", "priority": 3}
     ]
   }
 }
 ```
 
----
-
-### 健康检查
-
-#### 12. 健康检查记录列表
+### 4.2 健康状态查询
 
 ```http
-GET /health-checks?page=1&size=20&channel_id=ch_abc123&status=failed
+GET /api/v1/channels/:id/health
+Authorization: Bearer {token}
 ```
 
-**Query Parameters**:
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| page | integer | 否 | 页码，默认 1 |
-| size | integer | 否 | 每页数量，默认 20 |
-| channel_id | string | 否 | 筛选指定渠道 |
-| status | string | 否 | 结果: `healthy`, `degraded`, `failed` |
-| start_time | string | 否 | 开始时间 (ISO 8601) |
-| end_time | string | 否 | 结束时间 (ISO 8601) |
+**说明：**
+- 返回缓存的健康状态（非实时计算）
+- 建议前端轮询间隔：30 秒
+- Sprint 3 将提供 WebSocket 实时推送
 
-**Response 200**:
+**响应：**
 ```json
 {
-  "code": 0,
   "data": {
-    "items": [
-      {
-        "id": "hc_001",
-        "channel_id": "ch_abc123",
-        "channel_name": "微信支付",
-        "channel_code": "WECHAT_PAY",
-        "check_type": "scheduled",
-        "status": "healthy",
-        "response_time_ms": 85,
-        "checks": {
-          "connectivity": { "passed": true, "response_ms": 45 },
-          "auth": { "passed": true, "response_ms": 20 },
-          "transaction": { "passed": true, "response_ms": 20 }
-        },
-        "error_message": null,
-        "created_at": "2026-02-03T10:00:00Z"
-      },
-      {
-        "id": "hc_002",
-        "channel_id": "ch_abc123",
-        "channel_name": "微信支付",
-        "channel_code": "WECHAT_PAY",
-        "check_type": "scheduled",
-        "status": "failed",
-        "response_time_ms": 5001,
-        "checks": {
-          "connectivity": { "passed": true, "response_ms": 50 },
-          "auth": { "passed": true, "response_ms": 25 },
-          "transaction": { "passed": false, "response_ms": 5001, "error": "timeout" }
-        },
-        "error_message": "交易测试超时 (>5000ms)",
-        "created_at": "2026-02-03T09:30:00Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "size": 20,
-      "total": 150,
-      "total_pages": 8
-    }
-  }
-}
-```
-
----
-
-#### 13. 健康检查详情
-
-```http
-GET /health-checks/{id}
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "hc_001",
-    "channel_id": "ch_abc123",
-    "channel_name": "微信支付",
-    "channel_code": "WECHAT_PAY",
-    "check_type": "scheduled",
+    "channel_id": "chan-xxx",
     "status": "healthy",
-    "response_time_ms": 85,
-    "checks": {
-      "connectivity": {
-        "passed": true,
-        "response_ms": 45,
-        "details": {
-          "host": "api.mch.weixin.qq.com",
-          "port": 443,
-          "tls_version": "TLSv1.2"
-        }
-      },
-      "auth": {
-        "passed": true,
-        "response_ms": 20,
-        "details": {
-          "token_valid": true,
-          "expires_in": 7200
-        }
-      },
-      "transaction": {
-        "passed": true,
-        "response_ms": 20,
-        "details": {
-          "test_txn_id": "test_123",
-          "test_amount": 0.01
-        }
-      }
-    },
-    "error_message": null,
-    "created_at": "2026-02-03T10:00:00Z"
+    "success_rate": 98.5,
+    "avg_response_ms": 245,
+    "last_check_at": "2026-02-03T13:30:00Z",
+    "next_check_at": "2026-02-03T13:35:00Z",
+    "error_count": 0
   }
 }
 ```
 
 ---
 
-#### 14. 手动触发健康检查
+## 5. 枚举值定义
 
-```http
-POST /health-checks
-Content-Type: application/json
-```
+### 5.1 提供商类型
 
-**Request Body**:
-```json
-{
-  "channel_ids": ["ch_abc123", "ch_def456"]
-}
-```
+| 值 | 说明 |
+|----|------|
+| stripe | Stripe |
+| adyen | Adyen |
+| pix | PIX (巴西) |
+| spei | SPEI (墨西哥) |
+| upi | UPI (印度) |
 
-**说明**:
-- 如果不传 `channel_ids`，则对所有活跃渠道执行健康检查
-- 单次最多支持 20 个渠道
+### 5.2 渠道状态
 
-**Response 202**:
-```json
-{
-  "code": 0,
-  "data": {
-    "job_id": "hc_job_123",
-    "status": "pending",
-    "channel_count": 2,
-    "estimated_duration_ms": 10000,
-    "message": "健康检查任务已创建"
-  }
-}
-```
+| 值 | 说明 | 颜色 |
+|----|------|------|
+| active | 激活 | 绿色 |
+| inactive | 未激活 | 灰色 |
+| error | 错误 | 红色 |
+| maintenance | 维护中 | 橙色 |
+
+### 5.3 健康状态
+
+| 值 | 条件 | 颜色 |
+|----|------|------|
+| healthy | 成功率≥95% 且 响应时间<1s | 绿色 |
+| warning | 成功率90-95% 或 响应时间1-3s | 黄色 |
+| critical | 成功率<90% 或 响应时间>3s | 红色 |
+| offline | 健康检查连续失败 | 灰色 |
 
 ---
 
-#### 15. 渠道实时健康状态
+## 6. 错误码
 
-```http
-GET /channels/{id}/health-status
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "channel_id": "ch_abc123",
-    "channel_name": "微信支付",
-    "status": "healthy",
-    "last_check": {
-      "id": "hc_001",
-      "status": "healthy",
-      "created_at": "2026-02-03T10:00:00Z"
-    },
-    "metrics": {
-      "success_rate_1h": 0.999,
-      "success_rate_24h": 0.998,
-      "avg_response_ms_1h": 115,
-      "avg_response_ms_24h": 120,
-      "error_rate_1h": 0.001,
-      "error_rate_24h": 0.002
-    },
-    "consecutive_failures": 0,
-    "degraded_since": null
-  }
-}
-```
-
-**Status 枚举**:
-| 状态 | 说明 | 自动切换 |
-|------|------|----------|
-| healthy | 健康 | - |
-| degraded | 降级（响应慢或偶发错误） | 触发降级策略 |
-| failed | 故障（连续失败） | 自动切换备用渠道 |
-| unknown | 未知（无检查记录） | - |
-
----
-
-### 提供商管理
-
-#### 16. 提供商列表
-
-```http
-GET /providers?page=1&size=20&status=active
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "items": [
-      {
-        "id": "prov_wechat",
-        "code": "WECHAT",
-        "name": "财付通",
-        "name_en": "WeChat Pay",
-        "status": "active",
-        "supported_types": ["payment", "payout"],
-        "supported_currencies": ["CNY", "HKD"],
-        "channel_count": 3,
-        "created_at": "2026-01-01T00:00:00Z"
-      },
-      {
-        "id": "prov_alipay",
-        "code": "ALIPAY",
-        "name": "支付宝",
-        "name_en": "Alipay",
-        "status": "active",
-        "supported_types": ["payment", "payout"],
-        "supported_currencies": ["CNY"],
-        "channel_count": 2,
-        "created_at": "2026-01-01T00:00:00Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "size": 20,
-      "total": 5,
-      "total_pages": 1
-    }
-  }
-}
-```
-
----
-
-#### 17. 提供商详情
-
-```http
-GET /providers/{id}
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "prov_wechat",
-    "code": "WECHAT",
-    "name": "财付通",
-    "name_en": "WeChat Pay",
-    "description": "腾讯旗下第三方支付平台",
-    "status": "active",
-    "supported_types": ["payment", "payout"],
-    "supported_currencies": ["CNY", "HKD"],
-    "config_schema": {
-      "app_id": { "type": "string", "required": true },
-      "mch_id": { "type": "string", "required": true },
-      "api_key": { "type": "string", "required": true, "secret": true },
-      "api_version": { "type": "string", "enum": ["v2", "v3"], "default": "v3" }
-    },
-    "channels": [
-      {
-        "id": "ch_abc123",
-        "code": "WECHAT_PAY",
-        "name": "微信支付",
-        "status": "active"
-      }
-    ],
-    "created_at": "2026-01-01T00:00:00Z",
-    "updated_at": "2026-01-15T00:00:00Z"
-  }
-}
-```
-
----
-
-## 数据模型
-
-### Channel（渠道）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 渠道ID，唯一标识 |
-| code | string | 渠道编码，业务唯一 |
-| name | string | 渠道名称 |
-| description | string | 渠道描述 |
-| provider_id | string | 所属提供商ID |
-| provider_name | string | 提供商名称（冗余） |
-| type | string | 类型: `payment`/`payout`/`combined` |
-| status | string | 状态: `active`/`inactive`/`maintenance` |
-| priority | integer | 优先级，数值越小越优先 |
-| config | object | 渠道配置（JSON，由提供商定义结构） |
-| limits | object | 限额配置 |
-| health_status | string | 健康状态 |
-| last_health_check | datetime | 最后检查时间 |
-| success_rate_24h | decimal | 24小时成功率 |
-| avg_response_ms | integer | 平均响应时间(ms) |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
-
-### RoutingStrategy（路由策略）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 策略ID |
-| name | string | 策略名称 |
-| description | string | 策略描述 |
-| priority | integer | 优先级，1-N，越小越优先匹配 |
-| status | string | 状态: `active`/`inactive` |
-| rules | object | 匹配规则（条件组合） |
-| targets | array | 目标渠道及权重配置 |
-| failover_config | object | 故障转移配置 |
-| match_count_24h | integer | 24小时匹配次数 |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
-
-### HealthCheck（健康检查）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 检查记录ID |
-| channel_id | string | 渠道ID |
-| check_type | string | 类型: `scheduled`/`manual`/`auto_failover` |
-| status | string | 结果: `healthy`/`degraded`/`failed` |
-| response_time_ms | integer | 总响应时间 |
-| checks | object | 各检查项详情 |
-| error_message | string | 错误信息 |
-| created_at | datetime | 检查时间 |
-
-### Provider（提供商）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 提供商ID |
-| code | string | 提供商编码 |
-| name | string | 中文名称 |
-| name_en | string | 英文名称 |
-| description | string | 描述 |
-| status | string | 状态: `active`/`inactive` |
-| supported_types | array | 支持的渠道类型 |
-| supported_currencies | array | 支持的币种 |
-| config_schema | object | 配置字段定义 |
-
----
-
-## 路由策略规则引擎
-
-### 条件字段 (Condition Fields)
-
-| 字段 | 类型 | 示例 |
-|------|------|------|
-| amount | decimal | 100.50 |
-| currency | string | "CNY" |
-| merchant_id | string | "mch_123" |
-| user_id | string | "user_456" |
-| user.vip_level | integer | 3 |
-| payment_method | string | "QUICK_PAY" |
-| device_type | string | "ios" / "android" / "web" |
-| region | string | "CN" / "HK" / "US" |
-
-### 操作符 (Operators)
-
-| 操作符 | 说明 | 适用类型 |
-|--------|------|----------|
-| eq | 等于 | 所有 |
-| ne | 不等于 | 所有 |
-| gt | 大于 | number |
-| gte | 大于等于 | number |
-| lt | 小于 | number |
-| lte | 小于等于 | number |
-| in | 在列表中 | 所有 |
-| not_in | 不在列表中 | 所有 |
-| regex | 正则匹配 | string |
-
-### 匹配逻辑
-
-```
-// 规则评估顺序（优先级 1-N）
-for strategy in strategies order by priority:
-    if strategy.status != 'active': continue
-    if match(strategy.rules, transaction):
-        return select_target(strategy.targets)
-
-// 未匹配到任何策略时，使用默认渠道
-default_channel = get_default_channel()
-return default_channel
-
-// 目标选择（加权随机）
-function select_target(targets):
-    total_weight = sum(t.weight for t in targets)
-    random = random(0, total_weight)
-    for target in targets:
-        random -= target.weight
-        if random <= 0:
-            return target.channel_id
-```
-
----
-
-## 状态机定义
-
-### 渠道状态机
-
-```
-         ┌─────────────┐
-         │   inactive  │
-         │   (初始状态)  │
-         └──────┬──────┘
-                │ enable
-                ▼
-         ┌─────────────┐     disable      ┌─────────┐
-         │    active   │ ◄──────────────► │ inactive│
-         │   (运营中)   │                  └─────────┘
-         └──────┬──────┘
-                │ maintenance
-                ▼
-         ┌─────────────┐     restore      ┌─────────┐
-         │ maintenance │ ◄──────────────► │  active │
-         │   (维护中)   │                  └─────────┘
-         └─────────────┘
-```
-
-### 健康状态机
-
-```
-              ┌─────────┐
-    ┌────────►│ unknown │◄────────┐
-    │         └────┬────┘         │
-    │              │ check        │
-    │              ▼              │
-    │    ┌───────────────────┐    │
-    │    │      healthy      │◄───┤ recovery
-    └────┤    (连续成功 3+)   │    │
-         └─────────┬─────────┘    │
-                   │ failure      │
-                   ▼              │
-         ┌───────────────────┐    │
-         │     degraded      │────┘
-         │  (连续失败 1-2次)  │
-         │   or 响应超时      │
-         └─────────┬─────────┘
-                   │ failure
-                   ▼
-         ┌───────────────────┐
-         │      failed       │
-         │   (连续失败 3+)   │
-         └───────────────────┘
-```
-
----
-
-## 健康检查机制
-
-### 检查类型
-
-| 类型 | 触发方式 | 频率 |
-|------|----------|------|
-| scheduled | CronJob | 每 5 分钟 |
-| manual | API 调用 | 即时 |
-| auto_failover | 交易失败后 | 即时 |
-
-### 检查项
-
-| 检查项 | 说明 | 超时 |
+| 错误码 | 描述 | HTTP |
 |--------|------|------|
-| connectivity | TCP/TLS 连接测试 | 5s |
-| auth | 认证令牌有效性 | 5s |
-| transaction | 小额测试交易 | 10s |
-
-### 状态判定
-
-| 状态 | 条件 |
-|------|------|
-| healthy | 所有检查项通过 |
-| degraded | 任一检查项响应 >2s 或偶发失败 |
-| failed | 任一检查项失败或超时 |
+| CHANNEL_001 | 渠道不存在 | 404 |
+| CHANNEL_002 | 渠道配置无效 | 400 |
+| CHANNEL_003 | 渠道已被禁用 | 409 |
+| CHANNEL_004 | 密钥解密失败 | 500 |
+| ROUTING_001 | 策略不存在 | 404 |
+| ROUTING_002 | 优先级冲突 | 409 |
+| ROUTING_003 | 条件格式无效 | 400 |
+| HEALTH_001 | 健康检查失败 | 503 |
 
 ---
 
-## 错误码
+## 7. 变更日志
 
-| 错误码 | 说明 | HTTP |
-|--------|------|------|
-| 400001 | 参数验证失败 | 400 |
-| 400002 | 渠道编码已存在 | 400 |
-| 404001 | 渠道不存在 | 404 |
-| 404002 | 路由策略不存在 | 404 |
-| 404003 | 提供商不存在 | 404 |
-| 409001 | 渠道存在关联交易 | 409 |
-| 409002 | 渠道处于活跃状态，无法删除 | 409 |
-| 409003 | 路由策略优先级冲突 | 409 |
-| 422001 | 配置格式无效 | 422 |
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| 0.9 | 2026-02-03 | Sprint 2 初始版本，包含 15 个端点 |
 
 ---
 
-*文档结束 - v0.9 (草案)*
-
----
-
-#### 15a. 查询健康检查任务状态 (补充)
-
-```http
-GET /health-checks/jobs/{job_id}
-```
-
-**Response 200**:
-```json
-{
-  "code": 0,
-  "data": {
-    "job_id": "hc_job_123",
-    "status": "processing",
-    "total_channels": 5,
-    "processed_channels": 3,
-    "success_count": 3,
-    "failed_count": 0,
-    "pending_count": 2,
-    "started_at": "2026-02-03T11:20:00Z",
-    "estimated_completion": "2026-02-03T11:21:00Z",
-    "results": [
-      {
-        "channel_id": "ch_abc123",
-        "channel_name": "微信支付",
-        "status": "completed",
-        "health_status": "healthy",
-        "response_time_ms": 85
-      }
-    ]
-  }
-}
-```
-
-**Status 枚举**: `pending` | `processing` | `completed` | `failed`
-
+*文档结束*

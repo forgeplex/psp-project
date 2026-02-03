@@ -27,3 +27,11 @@ export { DynamicConfigForm } from './components/DynamicConfigForm';
 // 路由策略组件
 export { RoutingStrategyTable } from './components/routing/RoutingStrategyTable';
 export { RoutingStrategyForm } from './components/routing/RoutingStrategyForm';
+
+// 常量
+export {
+  CHANNEL_STATUS_CONFIG,
+  HEALTH_STATUS_CONFIG,
+  CHANNEL_TYPE_CONFIG,
+  DRAG_SORT_MESSAGES,
+} from './constants';

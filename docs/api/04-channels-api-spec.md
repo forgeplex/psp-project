@@ -1126,3 +1126,41 @@ function select_target(targets):
 ---
 
 *文档结束 - v1.0 (草案)*
+
+---
+
+#### 15a. 查询健康检查任务状态 (补充)
+
+```http
+GET /health-checks/jobs/{job_id}
+```
+
+**Response 200**:
+```json
+{
+  "code": 0,
+  "data": {
+    "job_id": "hc_job_123",
+    "status": "processing",
+    "total_channels": 5,
+    "processed_channels": 3,
+    "success_count": 3,
+    "failed_count": 0,
+    "pending_count": 2,
+    "started_at": "2026-02-03T11:20:00Z",
+    "estimated_completion": "2026-02-03T11:21:00Z",
+    "results": [
+      {
+        "channel_id": "ch_abc123",
+        "channel_name": "微信支付",
+        "status": "completed",
+        "health_status": "healthy",
+        "response_time_ms": 85
+      }
+    ]
+  }
+}
+```
+
+**Status 枚举**: `pending` | `processing` | `completed` | `failed`
+
